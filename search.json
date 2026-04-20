@@ -1,0 +1,552 @@
+[
+  {
+    "objectID": "index.html",
+    "href": "index.html",
+    "title": "When Machines Talk",
+    "section": "",
+    "text": "Preface\nI downloaded a dataset with a practical goal in mind: learn what an event log can tell about the machine that generated it.\nThe log is from Galdi filling machines — five machines, two years, 429,000 rows of real production data — hosted on Kaggle.\nI expected to spend a few hours max on it. That was several weeks ago…\nBasic exploratory analysis first. Each answer opened the next question, and the next one was always more interesting than the last. A structure emerged, patterns appeared. And then came a different question: can we formalize this? Turn the observations into a grammar — a systematic language to communicate with machines?\nThese seven episodes trace the path from raw data to a working language.\n\n Image courtesy of jcomp, on Freepik\n\nStack: R, tidyverse, Quarto Dataset: Packaging Industry Anomaly Detection — Diego Tosato et al., Galdi",
+    "crumbs": [
+      "Preface"
+    ]
+  },
+  {
+    "objectID": "01-dataset.html",
+    "href": "01-dataset.html",
+    "title": "Episode 1 — First Read",
+    "section": "",
+    "text": "What a row looks like\n132 alarm codes. No dictionary. We’ll have to figure them out.\nFirst look at the data. Here’s what a few rows look like:\nEach row is a time interval — a continuous period during which the machine was in a given state. The type column says what was happening, alarm gives the alarm code (if any), and speed is recorded alongside.\nFive machines, but they didn’t all start at the same time — and they didn’t start from zero.\ns_2 and s_3 show up later — not all machines were active from the start.\nEach row is an interval — a continuous period in a given state. The end of one is the start of the next. No gaps. No overlaps.\ngraph LR\n  A[sched. downtime] --&gt; B[idle]\n  B --&gt; C[production]\n  C --&gt; D[downtime]\n  D --&gt; E[production]\n  style A fill:#e8dcc8,color:#333\n  style B fill:#c8c8c8,color:#333\n  style C fill:#1d6fa4,color:#fff\n  style D fill:#c0392b,color:#fff\n  style E fill:#1d6fa4,color:#fff\n\n\n Each row is a continuous interval in one state.\nThere are exactly five state types:\nState\nCount\nShare\n\n\n\n\nproduction\n146795\n34.2%\n\n\nperformance_loss\n118584\n27.6%\n\n\ndowntime\n92084\n21.4%\n\n\nidle\n50149\n11.7%\n\n\nscheduled_downtime\n21782\n5.1%\nThe five state types already point towards performance analysis. But one number stands out.\nperformance_loss: 28% of all intervals. The machines are running — but not at full speed. No breakdown. No alarm. And yet it’s the second most frequent state in the log.",
+    "crumbs": [
+      "<span class='chapter-number'>1</span>  <span class='chapter-title'>Episode 1 — First Read</span>"
+    ]
+  },
+  {
+    "objectID": "01-dataset.html#what-a-row-looks-like",
+    "href": "01-dataset.html#what-a-row-looks-like",
+    "title": "Episode 1 — First Read",
+    "section": "",
+    "text": "Why this distinction matters\n\n\n\n\n\nA machine that runs all day with no downtime but spends half its time below full speed looks healthy if we only count stoppages. performance_loss captures the gap — and it’s large.",
+    "crumbs": [
+      "<span class='chapter-number'>1</span>  <span class='chapter-title'>Episode 1 — First Read</span>"
+    ]
+  },
+  {
+    "objectID": "01-dataset.html#the-codes-i-cant-read",
+    "href": "01-dataset.html#the-codes-i-cant-read",
+    "title": "Episode 1 — First Read",
+    "section": "The codes I can’t read",
+    "text": "The codes I can’t read\nEvery unplanned downtime interval carries an alarm code. There are 133 distinct codes in this log — from A_000 to A_132. A_000 seems to mean ‘normal operation’. The other 132 appear during stoppages.\nI found no public dictionary to translate these codes into fault descriptions.\n132 alarm codes, no Rosetta Stone. Just repeated patterns, frequencies, co-occurrences — and no translation key. We’ll have to figure out the meaning from behaviour. That’s what the following episodes do.",
+    "crumbs": [
+      "<span class='chapter-number'>1</span>  <span class='chapter-title'>Episode 1 — First Read</span>"
+    ]
+  },
+  {
+    "objectID": "01-dataset.html#the-counters-a-common-misreading",
+    "href": "01-dataset.html#the-counters-a-common-misreading",
+    "title": "Episode 1 — First Read",
+    "section": "The counters — a common misreading",
+    "text": "The counters — a common misreading\nThe log also records two counters: pi (packages counted at the entry of the machine) and po (packages counted at the exit).\n\n\n\n\n\nequipment_ID\nstart\ntype\npi\npo\ndelta_pi\ndelta_po\n\n\n\n\ns_1\n2020-01-01 14:09\nproduction\n59,917,239\n59,518,425\n629\n626\n\n\ns_1\n2020-01-01 14:22\nproduction\n59,917,286\n59,518,470\n47\n45\n\n\ns_1\n2020-01-01 14:23\nproduction\n59,919,383\n59,520,563\n2,097\n2,093\n\n\ns_1\n2020-01-01 14:51\nproduction\n59,919,421\n59,520,603\n38\n40\n\n\ns_1\n2020-01-01 14:52\nproduction\n59,922,962\n59,524,144\n3,541\n3,541\n\n\n\n\n\n\n\nThe values are large and grow from row to row — they’re cumulative counters, not per-interval counts. To get what happened during an interval, we need the difference with the previous row (delta_pi, delta_po).\nIf these counters are reliable, they should grow steadily over time — a straight line going up.\n\n\n\n\n\nCumulative counters pi (packages in) and po (packages out) over two years, by machine. A well-behaved counter is a straight line going up.\n\n\n\n\nOuch… s_1 and s_3 are clean — steady growth, pi and po tracking each other. The rest is less reassuring. s_2 shows a spike to 300 million then drops back to near zero. s_4 oscillates instead of growing — the counter goes down, which a cumulative counter shouldn’t do. s_5 has a clean reset to zero mid-series.\nThese counters can’t be trusted at interval level. And on some machines, not even at daily level.\n\n\n\n\n\n\nWhat this rules out\n\n\n\n\n\nThe reject rate calculated from delta_po − delta_pi per interval measures sensor behaviour, not production quality. On short windows, the signal is drowned in noise. For an interpretable figure, aggregating over at least a full day is necessary.",
+    "crumbs": [
+      "<span class='chapter-number'>1</span>  <span class='chapter-title'>Episode 1 — First Read</span>"
+    ]
+  },
+  {
+    "objectID": "01-dataset.html#five-machines-but-not-a-fleet",
+    "href": "01-dataset.html#five-machines-but-not-a-fleet",
+    "title": "Episode 1 — First Read",
+    "section": "Five machines — but not a fleet",
+    "text": "Five machines — but not a fleet\nWe’d expect these five machines to be of the same type and do the same work. The speed setpoints say otherwise.\n\n\n\n\n\nSpeed setpoint distribution by machine (share of active time per 500 pkg/h bin, excluding start/stop).\n\n\n\n\nThe speed regimes don’t overlap. Some machines run at high throughput; others at much lower setpoints. They don’t run at the same speed.\nAnd their co-activity confirms the same thing:\n\n\n\n\n\nFraction of total time where both machines are simultaneously in production. Dark = often together; light = rarely together.\n\n\n\n\n\n\n\n\n\n\nHow to read this matrix\n\n\n\n\n\nEach cell shows the fraction of total time where both machines are simultaneously in production (5-minute grid over the full history). A score near zero means they almost never run together — they alternate. A high score means they operate in parallel.\n\n\n\nSome pairs run together. Others almost never do. Comparing their performance as if they were doing the same job would give us numbers that mean nothing.",
+    "crumbs": [
+      "<span class='chapter-number'>1</span>  <span class='chapter-title'>Episode 1 — First Read</span>"
+    ]
+  },
+  {
+    "objectID": "01-dataset.html#what-the-machines-are-hiding",
+    "href": "01-dataset.html#what-the-machines-are-hiding",
+    "title": "Episode 1 — First Read",
+    "section": "What the machines are hiding",
+    "text": "What the machines are hiding\nNo diagnosis yet. But we now have a map of what we don’t know.\n133 alarm codes with no dictionary. A state — performance_loss — that slips through standard reporting. Counters that drift. Five machines that aren’t in the same league.",
+    "crumbs": [
+      "<span class='chapter-number'>1</span>  <span class='chapter-title'>Episode 1 — First Read</span>"
+    ]
+  },
+  {
+    "objectID": "01-dataset.html#what-to-do-about-it",
+    "href": "01-dataset.html#what-to-do-about-it",
+    "title": "Episode 1 — First Read",
+    "section": "What to do about it",
+    "text": "What to do about it\nThese five machines can’t be pooled. Different speed regimes, different histories, different co-activity patterns. Aggregating them would give us averages that describe none of them.\nThe counters are unreliable at interval level. pi and po are useful over full days or longer. Below that, they measure noise.\nperformance_loss matters. It accounts for 28% of intervals. If we only look at downtimes, we miss a quarter of what’s going on.\n\nNext: Let’s compute OEE. The results are not what the availability numbers would suggest.",
+    "crumbs": [
+      "<span class='chapter-number'>1</span>  <span class='chapter-title'>Episode 1 — First Read</span>"
+    ]
+  },
+  {
+    "objectID": "02-oee.html",
+    "href": "02-oee.html",
+    "title": "Episode 2 — OEE: when availability lies",
+    "section": "",
+    "text": "What OEE measures here\nFive machines. One indicator. And one that shows 94% availability for a 44% OEE.\nA single OEE value tells almost nothing. It’s the breakdown that reveals where the time goes — and what the headline number hides.\nOEE will be computed without the quality component — the pi/po counters aren’t reliable enough, as we saw in Episode 1.",
+    "crumbs": [
+      "<span class='chapter-number'>2</span>  <span class='chapter-title'>Episode 2 — OEE: when availability lies</span>"
+    ]
+  },
+  {
+    "objectID": "02-oee.html#what-oee-measures-here",
+    "href": "02-oee.html#what-oee-measures-here",
+    "title": "Episode 2 — OEE: when availability lies",
+    "section": "",
+    "text": "Method note — Time-based OEE\n\n\n\n\n\nOEE = Availability × Performance\n\nAvailability = (open time − downtime) / open time\nPerformance = production time / (production + performance_loss + idle)\n\nA time-based variant, suited to logs where volume counters are absent or unreliable.",
+    "crumbs": [
+      "<span class='chapter-number'>2</span>  <span class='chapter-title'>Episode 2 — OEE: when availability lies</span>"
+    ]
+  },
+  {
+    "objectID": "02-oee.html#the-headline-numbers",
+    "href": "02-oee.html#the-headline-numbers",
+    "title": "Episode 2 — OEE: when availability lies",
+    "section": "The headline numbers",
+    "text": "The headline numbers\n\n\n\n\n\nMachine\nAvailability\nPerformance\nOEE\n\n\n\n\ns_1\n88.3%\n73.3%\n64.7%\n\n\ns_2\n86.2%\n37.8%\n32.6%\n\n\ns_3\n93.1%\n48.0%\n44.7%\n\n\ns_4\n94.2%\n46.7%\n44.0%\n\n\ns_5\n95.9%\n55.7%\n53.4%\n\n\n\n\n\n\n\nAvailability is decent everywhere — 86 to 96%. Performance is where it falls apart. To understand why, we need to look at where the time goes.\n\n\n\n\n\nTime split by state and machine.\n\n\n\n\nTwo things stand out.\nMost machines spend a large share of their time in idle (grey) — waiting, not producing.\nAnd there’s s_4: less downtime (red) than s_1 or s_2, but a thick band of performance_loss (light blue). That’s a different story.",
+    "crumbs": [
+      "<span class='chapter-number'>2</span>  <span class='chapter-title'>Episode 2 — OEE: when availability lies</span>"
+    ]
+  },
+  {
+    "objectID": "02-oee.html#the-s_4-paradox",
+    "href": "02-oee.html#the-s_4-paradox",
+    "title": "Episode 2 — OEE: when availability lies",
+    "section": "The s_4 paradox",
+    "text": "The s_4 paradox\ns_4 is the second most reliable machine in the group: 94% availability. It rarely stops. And yet its OEE is 44%.\n\n\n\n\n\nTime breakdown for s_4 (open time only). Performance loss accounts for a quarter of available time.\n\n\n\n\nOver two years, s_4 spent roughly 1,540 hours in performance_loss — a quarter of its open time. The machine was running. No alarm was triggered. But it was barely producing.\nperformance_loss is the least visible state: no alarm, no logged stoppage, just a speed below target.",
+    "crumbs": [
+      "<span class='chapter-number'>2</span>  <span class='chapter-title'>Episode 2 — OEE: when availability lies</span>"
+    ]
+  },
+  {
+    "objectID": "02-oee.html#the-time-dimension-s_1-under-the-lens",
+    "href": "02-oee.html#the-time-dimension-s_1-under-the-lens",
+    "title": "Episode 2 — OEE: when availability lies",
+    "section": "The time dimension — s_1 under the lens",
+    "text": "The time dimension — s_1 under the lens\ns_1 is the reference machine: two full years of data, best OEE in the group. Let’s see how its OEE evolves month by month.\n\n\n\n\n\nMonthly OEE for s_1. The dashed red line is the two-year average. Automatic changepoint detection finds no structural break — the machine is stable.\n\n\n\n\n\n\n\n\n\n\nMethod note — Changepoint detection\n\n\n\n\n\nAutomatically detects periods where the average OEE is stable — without setting the number of breaks in advance. Reveals whether a machine has degraded, improved, or has been running on the same plateau for months.\n\n\n\n\n\n\n\n\nPeriod\nStart\nEnd\nMonths\nMean OEE\nMean Avail.\nMean Perf.\n\n\n\n\nP1\nJan 2020\nDec 2021\n24\n64.5%\n88.2%\n73.2%\n\n\n\n\n\n\n\nThe detection finds a single stable period across the full two years. s_1 has been stable — no progressive degradation, no improvement. Its worst month stays within the envelope.\nThat’s a result in itself: we’re not looking at a machine that’s getting worse. We’re looking at a machine on a plateau.",
+    "crumbs": [
+      "<span class='chapter-number'>2</span>  <span class='chapter-title'>Episode 2 — OEE: when availability lies</span>"
+    ]
+  },
+  {
+    "objectID": "02-oee.html#not-all-downtimes-are-equal",
+    "href": "02-oee.html#not-all-downtimes-are-equal",
+    "title": "Episode 2 — OEE: when availability lies",
+    "section": "Not all downtimes are equal",
+    "text": "Not all downtimes are equal\nA 30-second stop and a 2-hour stop don’t weigh the same. We split downtime into three classes — thresholds estimated automatically from the data, no arbitrary cutoffs.\n\n\n\n\n\nClass\nEvents\n% events\nTotal time (h)\n% downtime\n\n\n\n\nP1\n28,779\n31.3%\n100\n3.2%\n\n\nP2\n44,542\n48.4%\n825\n26.2%\n\n\nP3\n18,763\n20.4%\n2223\n70.6%\n\n\n\n\n\n\n\nThe picture is clear: P3 stops account for 20% of events but 71% of the time lost. The short stops (P1 + P2) are frequent but lightweight. P3 is where the leverage is.",
+    "crumbs": [
+      "<span class='chapter-number'>2</span>  <span class='chapter-title'>Episode 2 — OEE: when availability lies</span>"
+    ]
+  },
+  {
+    "objectID": "02-oee.html#what-the-machines-are-hiding",
+    "href": "02-oee.html#what-the-machines-are-hiding",
+    "title": "Episode 2 — OEE: when availability lies",
+    "section": "What the machines are hiding",
+    "text": "What the machines are hiding\nPerformance, not availability, is the real problem. All five machines have availability above 86%. Yet four out of five have an OEE below 55%. The gap is in performance_loss and idle — not in breakdowns.\ns_4 doesn’t break down — it runs on empty. 94% availability, 1,540 hours of performance_loss over two years. The machine runs, no alarm fires, but it barely produces. The log alone doesn’t tell us why.\ns_1 has been on a plateau for two years. No visible progressive degradation. Its worst month stays within the regime envelope.",
+    "crumbs": [
+      "<span class='chapter-number'>2</span>  <span class='chapter-title'>Episode 2 — OEE: when availability lies</span>"
+    ]
+  },
+  {
+    "objectID": "02-oee.html#what-to-do-about-it",
+    "href": "02-oee.html#what-to-do-about-it",
+    "title": "Episode 2 — OEE: when availability lies",
+    "section": "What to do about it",
+    "text": "What to do about it\nThe alarms behind these losses are the next target. Which codes cost the most time? The next episode finds out.\nSome questions are beyond this log. performance_loss on s_4 and idle time on several machines are major losses — but the log doesn’t carry enough context to explain them. The rest of this book focuses on what the data can answer: downtime patterns, alarm behaviour, and predictability.\n\nNext: 132 alarm codes. Which ones hurt?",
+    "crumbs": [
+      "<span class='chapter-number'>2</span>  <span class='chapter-title'>Episode 2 — OEE: when availability lies</span>"
+    ]
+  },
+  {
+    "objectID": "03-alarms.html",
+    "href": "03-alarms.html",
+    "title": "Episode 3 — Which alarms hurt",
+    "section": "",
+    "text": "The alarm Pareto\n132 codes. Five machines. A handful account for most of the time lost.\n132 alarm codes in this log. Most are anecdotal. A handful concentrate most of the time lost.\nFirst question: across all five machines, how much time has each alarm code cost over two years?\nAlarm\nEvents\nTotal (h)\nCum. %\n\n\n\n\nA_065\n18879\n857.9\n28.3%\n\n\nA_101\n18416\n515.2\n45.3%\n\n\nA_006\n3942\n411.2\n58.9%\n\n\nA_001\n4403\n387.6\n71.7%\n\n\nA_066\n3384\n153.4\n76.8%\n\n\nA_005\n12226\n131.6\n81.1%\n\n\nA_020\n5100\n111.1\n84.8%\n\n\nA_010\n9278\n90.6\n87.8%\n\n\nA_016\n1112\n52.9\n89.5%\n\n\nA_003\n2225\n42.1\n90.9%\nTop 15 alarms by total downtime, all machines combined. The curve shows the cumulative percentage.\nThe Pareto tells us how much. But do all machines suffer from the same alarms?",
+    "crumbs": [
+      "<span class='chapter-number'>3</span>  <span class='chapter-title'>Episode 3 — Which alarms hurt</span>"
+    ]
+  },
+  {
+    "objectID": "03-alarms.html#one-fingerprint-per-machine",
+    "href": "03-alarms.html#one-fingerprint-per-machine",
+    "title": "Episode 3 — Which alarms hurt",
+    "section": "One fingerprint per machine",
+    "text": "One fingerprint per machine\n\n\n\n\n\nAlarm fingerprint by machine. Each cell shows total time lost (hours) for that machine × alarm pair. Values below 5h are not labelled.\n\n\n\n\n\n\n\n\n\n\nMethod note — Alarm fingerprint\n\n\n\n\n\nA nearly empty column = a problem specific to one machine. A uniformly filled column = a problem shared across machines. Separates local faults from systemic ones at a glance.",
+    "crumbs": [
+      "<span class='chapter-number'>3</span>  <span class='chapter-title'>Episode 3 — Which alarms hurt</span>"
+    ]
+  },
+  {
+    "objectID": "03-alarms.html#how-do-they-occur",
+    "href": "03-alarms.html#how-do-they-occur",
+    "title": "Episode 3 — Which alarms hurt",
+    "section": "How do they occur?",
+    "text": "How do they occur?\nWe know which alarms cost the most and where they hit. But do they strike regularly?\n\n\n\n\n\nOccurrence pattern of the top 3 alarms by time lost. Each dot = one event. Dense horizontal bands = burst days.\n\n\n\n\nSame Pareto ranking, completely different behaviours. s_1 / A_065 comes in dense bursts — the machine cycles between failure and restart all day long. s_3 / A_006 only appears when the machine is active (s_3 was offline until late 2020) — but once active, it’s present consistently. s_5 / A_101 is spread evenly across active days, with gaps matching periods when the machine was down.",
+    "crumbs": [
+      "<span class='chapter-number'>3</span>  <span class='chapter-title'>Episode 3 — Which alarms hurt</span>"
+    ]
+  },
+  {
+    "objectID": "03-alarms.html#what-the-machines-are-hiding",
+    "href": "03-alarms.html#what-the-machines-are-hiding",
+    "title": "Episode 3 — Which alarms hurt",
+    "section": "What the machines are hiding",
+    "text": "What the machines are hiding\nA Pareto is not enough. The same alarm can be a daily burst on one machine and a constant background on another.\nEach machine has its own alarm signature. Some alarms are local. Others are shared. The fingerprint separates the two.\nThe worst alarms are stable. The top codes in the Pareto have been there since the beginning — no sudden change, no improvement. They’re structural.",
+    "crumbs": [
+      "<span class='chapter-number'>3</span>  <span class='chapter-title'>Episode 3 — Which alarms hurt</span>"
+    ]
+  },
+  {
+    "objectID": "03-alarms.html#what-to-do-about-it",
+    "href": "03-alarms.html#what-to-do-about-it",
+    "title": "Episode 3 — Which alarms hurt",
+    "section": "What to do about it",
+    "text": "What to do about it\nWe’ve mapped the alarms — how much they cost, where they hit, and how they behave. The next question is whether there are patterns in when they happen.\n\nNext: what happens just before a failure?",
+    "crumbs": [
+      "<span class='chapter-number'>3</span>  <span class='chapter-title'>Episode 3 — Which alarms hurt</span>"
+    ]
+  },
+  {
+    "objectID": "04-sequences.html",
+    "href": "04-sequences.html",
+    "title": "Episode 4 — What happens before a failure",
+    "section": "",
+    "text": "Do states predict downtimes?\nDo failures leave traces in the log? We look at what happens before, during, and between them.\nSo far we’ve looked at each state on its own — how much time it costs, where it hits, how it behaves.\nBut a downtime doesn’t appear out of thin air. Is there something before it?\nFirst question: what state does a machine come from when it enters a downtime?\nState immediately before a downtime. 99% come straight from production — no visible slow-down beforehand.\n99% of downtimes come straight from production. No slow degradation visible at the state level — the machine produces, then stops. The state type alone doesn’t predict what’s coming.",
+    "crumbs": [
+      "<span class='chapter-number'>4</span>  <span class='chapter-title'>Episode 4 — What happens before a failure</span>"
+    ]
+  },
+  {
+    "objectID": "04-sequences.html#do-consecutive-alarm-pairs-repeat",
+    "href": "04-sequences.html#do-consecutive-alarm-pairs-repeat",
+    "title": "Episode 4 — What happens before a failure",
+    "section": "Do consecutive alarm pairs repeat?",
+    "text": "Do consecutive alarm pairs repeat?\n\n\n\n\n\nTop 20 consecutive alarm pairs (all machines), by frequency.\n\n\n\n\n\n\n\n\n\n\nMethod note — Alarm bigrams\n\n\n\n\n\nConsecutive alarm pairs on the same machine, same day. Dominant bigrams reveal repetitive sequences — often the same problem recurring until it’s resolved.\n\n\n\nThe dominant pairs are an alarm followed by itself — the same code firing repeatedly until resolved.",
+    "crumbs": [
+      "<span class='chapter-number'>4</span>  <span class='chapter-title'>Episode 4 — What happens before a failure</span>"
+    ]
+  },
+  {
+    "objectID": "04-sequences.html#zooming-out-the-process-map",
+    "href": "04-sequences.html#zooming-out-the-process-map",
+    "title": "Episode 4 — What happens before a failure",
+    "section": "Zooming out: the process map",
+    "text": "Zooming out: the process map\nWe’ve been looking at individual transitions and alarm pairs. Stepping back: what does the overall flow between states look like?\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\nMethod note — Process map\n\n\n\n\n\nAggregates all state transitions across sessions. Arc thickness reflects probability. Shows dominant flows and loops at a glance.\n\n\n\nThe dominant cycle is visible: production ↔︎ downtime, with perf. loss as a transition state (especially after idle — the startup ramp-up). But this pattern is the same for every machine. It doesn’t tell us which failure is coming or when.",
+    "crumbs": [
+      "<span class='chapter-number'>4</span>  <span class='chapter-title'>Episode 4 — What happens before a failure</span>"
+    ]
+  },
+  {
+    "objectID": "04-sequences.html#what-the-machines-are-hiding",
+    "href": "04-sequences.html#what-the-machines-are-hiding",
+    "title": "Episode 4 — What happens before a failure",
+    "section": "What the machines are hiding",
+    "text": "What the machines are hiding\nDo failures leave traces? At the state level, no — 99% come straight from production. At the alarm level, the same codes repeat in cycles. The trace is in the pattern, not in the state.",
+    "crumbs": [
+      "<span class='chapter-number'>4</span>  <span class='chapter-title'>Episode 4 — What happens before a failure</span>"
+    ]
+  },
+  {
+    "objectID": "04-sequences.html#what-to-do-about-it",
+    "href": "04-sequences.html#what-to-do-about-it",
+    "title": "Episode 4 — What happens before a failure",
+    "section": "What to do about it",
+    "text": "What to do about it\nThe same alarm code can behave very differently — dense bursts one day, nothing the next. The Pareto sees the total. The patterns tell a different story.\n\nNext: we look for the events that don’t fit any pattern — anomalies in duration and timing.",
+    "crumbs": [
+      "<span class='chapter-number'>4</span>  <span class='chapter-title'>Episode 4 — What happens before a failure</span>"
+    ]
+  },
+  {
+    "objectID": "05-anomalies.html",
+    "href": "05-anomalies.html",
+    "title": "Episode 5 — The outliers",
+    "section": "",
+    "text": "Unusually long stops\nAverages hide extremes. This episode looks for the events that don’t fit.\nSo far we’ve ranked alarms, mapped them to machines, and looked at sequences. All of that works on aggregates — totals, averages, distributions. But a stop that lasts ten times longer than usual for the same alarm code doesn’t move the average much. It doesn’t trigger a special alert. It’s just there, in the data, with a date and a code.\nTwo approaches to find it.\nSame alarm, same machine. 30 seconds one day, 45 minutes the next. The red dots below are the statistically unusual ones — not necessarily the longest in absolute terms, but the farthest from the history of that alarm on that machine.\nDuration distribution for the 8 most active alarm codes. Red dots = events unusually long for their alarm on their machine.\nThe red dots are where something different happened. Same alarm code, but a duration far outside the norm for that machine. Some red dots appear inside the violin because the violin mixes all machines — the event is unusual for its machine even if it looks normal for the group.",
+    "crumbs": [
+      "<span class='chapter-number'>5</span>  <span class='chapter-title'>Episode 5 — The outliers</span>"
+    ]
+  },
+  {
+    "objectID": "05-anomalies.html#unusually-long-stops",
+    "href": "05-anomalies.html#unusually-long-stops",
+    "title": "Episode 5 — The outliers",
+    "section": "",
+    "text": "Method note — Duration anomalies\n\n\n\n\n\nCompares each stop to the historical distribution of the same alarm on the same machine. Threshold: 3 standard deviations above the mean. Finds stops that are unusually long for their alarm — even if their absolute duration is moderate.",
+    "crumbs": [
+      "<span class='chapter-number'>5</span>  <span class='chapter-title'>Episode 5 — The outliers</span>"
+    ]
+  },
+  {
+    "objectID": "05-anomalies.html#are-there-high-risk-hours",
+    "href": "05-anomalies.html#are-there-high-risk-hours",
+    "title": "Episode 5 — The outliers",
+    "section": "Are there high-risk hours?",
+    "text": "Are there high-risk hours?\nMachines don’t fail randomly throughout the day. Operational routines — whatever they are — create hourly patterns.\n\n\n\n\n\nAverage downtime rate by hour of day, per machine. Peaks reveal structurally loaded hours.\n\n\n\n\nRed bars mark the hours with the highest downtime rate for each machine. Each machine has its own rhythm. s_1 and s_2 peak in the early morning. s_3 peaks in the afternoon (13–17h). s_4 has an isolated spike at 2am. s_5 shows mild peaks mid-morning and evening.\n\n\n\n\n\n\nMethod note — Hourly profile\n\n\n\n\n\nComputes the average downtime rate per hour over two years. Reveals structurally loaded hours — and whether machines share the same daily rhythm or not.",
+    "crumbs": [
+      "<span class='chapter-number'>5</span>  <span class='chapter-title'>Episode 5 — The outliers</span>"
+    ]
+  },
+  {
+    "objectID": "05-anomalies.html#what-the-machines-are-hiding",
+    "href": "05-anomalies.html#what-the-machines-are-hiding",
+    "title": "Episode 5 — The outliers",
+    "section": "What the machines are hiding",
+    "text": "What the machines are hiding\nEvery alarm has outliers. The same code can last 6 seconds or 15 hours. Duration is not predictable from the alarm code alone.\nEach machine has its own daily rhythm. Some peak in the morning, others in the afternoon. Without the shift schedule we can’t explain why — but the profiles are distinct.",
+    "crumbs": [
+      "<span class='chapter-number'>5</span>  <span class='chapter-title'>Episode 5 — The outliers</span>"
+    ]
+  },
+  {
+    "objectID": "05-anomalies.html#what-to-do-about-it",
+    "href": "05-anomalies.html#what-to-do-about-it",
+    "title": "Episode 5 — The outliers",
+    "section": "What to do about it",
+    "text": "What to do about it\nThe data shows the what — not the why. Alarm durations are unpredictable, and each machine has its own daily rhythm. Explaining these patterns would require context the log doesn’t carry — shift schedules, operator actions, maintenance history.\n\nNext: we’ve been looking at alarms separately — rankings, patterns, anomalies. What happens when we look at how they relate to each other?",
+    "crumbs": [
+      "<span class='chapter-number'>5</span>  <span class='chapter-title'>Episode 5 — The outliers</span>"
+    ]
+  },
+  {
+    "objectID": "06-rosetta.html",
+    "href": "06-rosetta.html",
+    "title": "Episode 6 — The Rosetta Stone",
+    "section": "",
+    "text": "132 codes, seen together\n132 alarm codes. No dictionary. But the data knows how to read them.\nFive episodes of investigation — the dataset, OEE, alarm rankings, sequences, anomalies. Each episode added a piece. But we were always looking at alarms separately.\nWhat if we looked at all of them at once?\nWhich alarms tend to show up on the same days, on the same machines? A Principal Component Analysis (PCA) looks at alarm co-occurrences and finds the main directions that separate the machines.\nMachine similarity based on alarm profiles. 100% = same alarms, 0% = completely different.\ns_1 and s_4 have 0% similarity — completely different alarm profiles. s_3 and s_5 are 85% similar. These are not five copies of the same machine.",
+    "crumbs": [
+      "<span class='chapter-number'>6</span>  <span class='chapter-title'>Episode 6 — The Rosetta Stone</span>"
+    ]
+  },
+  {
+    "objectID": "06-rosetta.html#codes-seen-together",
+    "href": "06-rosetta.html#codes-seen-together",
+    "title": "Episode 6 — The Rosetta Stone",
+    "section": "",
+    "text": "Method note — PCA on alarm co-occurrences\n\n\n\n\n\nFor each day and machine, we record which alarms were present (yes/no). PCA finds the directions in this data that best separate the machines. The similarity score measures how much two machines share the same alarm behaviour — 100% means identical profiles, 0% means nothing in common.",
+    "crumbs": [
+      "<span class='chapter-number'>6</span>  <span class='chapter-title'>Episode 6 — The Rosetta Stone</span>"
+    ]
+  },
+  {
+    "objectID": "06-rosetta.html#the-pieces-fall-into-place",
+    "href": "06-rosetta.html#the-pieces-fall-into-place",
+    "title": "Episode 6 — The Rosetta Stone",
+    "section": "The pieces fall into place",
+    "text": "The pieces fall into place\nThis changes how we read everything that came before.\nEpisode 1 said these five machines weren’t a fleet — different speeds, different histories. The PCA confirms it at the alarm level: each machine has its own failure family. Not the same breakdowns happening to five copies of the same equipment.\nEpisode 2 showed the s_4 paradox — 94% availability, 44% OEE. The PCA shows that s_4 has its own alarm family — a group of codes that fire together.\nEpisode 3 showed A_065 bursting in dense daily cycles on s_1. The PCA confirms it’s not a single alarm — A_065, A_066, A_067, A_068 belong to the same family. A whole subsystem.\nEpisode 5 showed each machine has its own daily rhythm. Combined with the PCA, it confirms that machines don’t just differ in which alarms they have — they differ in when they happen.",
+    "crumbs": [
+      "<span class='chapter-number'>6</span>  <span class='chapter-title'>Episode 6 — The Rosetta Stone</span>"
+    ]
+  },
+  {
+    "objectID": "06-rosetta.html#what-leads-to-a-long-stop",
+    "href": "06-rosetta.html#what-leads-to-a-long-stop",
+    "title": "Episode 6 — The Rosetta Stone",
+    "section": "What leads to a long stop?",
+    "text": "What leads to a long stop?\nNow that we know each machine has its own alarm family, we can look for statistical associations within each machine. A model learns which alarms are most strongly associated with long stops — applied per machine, not globally.\n\n\n\n\n\nMachine\nStrongest predictors of long stop\n\n\n\n\ns_1\nA_065 + A_066 + A_001\n\n\ns_2\nA_101 + A_006 + A_001\n\n\ns_3\nA_101 + A_006 + A_001\n\n\ns_4\nA_006 + A_011 + A_012 + A_001\n\n\ns_5\nA_101 + A_066\n\n\n\n\n\n\n\nWhen we stop mixing machines, the associations become clear. Each machine has its own set of predictors — different alarms, different combinations.\n\n\n\n\n\n\nMethod note — Bayesian network per machine\n\n\n\n\n\nLearns which alarms are most strongly associated with long stops. Applied per machine instead of globally, the noise from other machines disappears and the structural links emerge.",
+    "crumbs": [
+      "<span class='chapter-number'>6</span>  <span class='chapter-title'>Episode 6 — The Rosetta Stone</span>"
+    ]
+  },
+  {
+    "objectID": "06-rosetta.html#the-escalation-path",
+    "href": "06-rosetta.html#the-escalation-path",
+    "title": "Episode 6 — The Rosetta Stone",
+    "section": "The escalation path",
+    "text": "The escalation path\nOn s_1, the model identifies a sequence: A_065 typically precedes A_001, which precedes a long stop. We can verify the order directly in the timestamps.\nOn burst days where both A_065 and A_001 appear, A_065 fires first 72% of the time, with a median lead of 251 minutes before A_001 shows up.\nThat’s a confirmed sequence — A_065 tends to precede A_001, which precedes the long stop. Turning this into an operational alert would require knowing how much time an operator needs to intervene. The data shows the sequence — the plant defines the action window.",
+    "crumbs": [
+      "<span class='chapter-number'>6</span>  <span class='chapter-title'>Episode 6 — The Rosetta Stone</span>"
+    ]
+  },
+  {
+    "objectID": "06-rosetta.html#what-predicts-a-long-stop",
+    "href": "06-rosetta.html#what-predicts-a-long-stop",
+    "title": "Episode 6 — The Rosetta Stone",
+    "section": "What predicts a long stop?",
+    "text": "What predicts a long stop?\nBeyond alarm sequences, a broader question: can the machine’s recent behaviour predict a long stop?\nOn s_1, the strongest predictor is not a specific alarm code — it’s the accumulation of downtime in the last 30 minutes. A machine that has been stopping and restarting repeatedly is more likely to hit a long stop next. The pattern matters more than the individual alarm.\nOn s_4, no signal was found — the log alone doesn’t carry enough information to predict long stops on every machine.",
+    "crumbs": [
+      "<span class='chapter-number'>6</span>  <span class='chapter-title'>Episode 6 — The Rosetta Stone</span>"
+    ]
+  },
+  {
+    "objectID": "06-rosetta.html#the-cost",
+    "href": "06-rosetta.html#the-cost",
+    "title": "Episode 6 — The Rosetta Stone",
+    "section": "The cost",
+    "text": "The cost\n\n\n\n\n\nMachine\nAlarm\nEvents\nDowntime (h/yr)\nOEE gain (pts)\n\n\n\n\ns_1\nA_065\n18879\n428\n11.1\n\n\ns_2\nA_001\n1329\n90\n13.3\n\n\ns_3\nA_006\n1319\n117\n7.7\n\n\ns_5\nA_101\n8252\n142\n6.2\n\n\ns_2\nA_101\n6987\n67\n9.9\n\n\ns_2\nA_006\n1695\n56\n8.3\n\n\ns_3\nA_101\n3177\n48\n3.2\n\n\ns_1\nA_066\n3312\n75\n2.0\n\n\ns_3\nA_001\n1296\n41\n2.7\n\n\ns_4\nA_005\n7042\n36\n2.6\n\n\n\n\n\n\n\nEliminating A_065 on s_1 alone would recover 11.1 points of OEE. The gains are heavily skewed — s_1 concentrates most of the potential improvement. Tackling the entire alarm family would add up, since the alarms within a family don’t overlap in time.",
+    "crumbs": [
+      "<span class='chapter-number'>6</span>  <span class='chapter-title'>Episode 6 — The Rosetta Stone</span>"
+    ]
+  },
+  {
+    "objectID": "06-rosetta.html#the-rosetta-stone",
+    "href": "06-rosetta.html#the-rosetta-stone",
+    "title": "Episode 6 — The Rosetta Stone",
+    "section": "The Rosetta Stone",
+    "text": "The Rosetta Stone\nIn Episode 1, we had 132 alarm codes and no dictionary. Six episodes later, here’s what we’ve built:\n\nEach machine has its own alarm family. s_1 and s_4 share 0% of their alarm profiles. The codes aren’t random — they group by machine.\nEach family has a distinct behaviour. s_1’s family fires in bursts. s_3 and s_5 share similar profiles. Some alarms are common across machines.\nThe statistical links are machine-specific. On s_1, A_065 precedes A_001, which precedes a long stop. On s_4, it’s a different set entirely. Mixing machines hides these associations.\nAlarm sequences have a direction. On s_1, A_065 fires before A_001 72% of the time, with a median 251-minute lead. The sequence is confirmed — making it actionable requires knowing the operator’s response time.\nThe cost is quantifiable. Eliminating a single alarm family on s_1 would recover 11.1 points of OEE.\n\nThat’s the Rosetta Stone: 132 opaque codes, decoded into families, associations, escalation paths, and costs — from behaviour alone, without a dictionary.",
+    "crumbs": [
+      "<span class='chapter-number'>6</span>  <span class='chapter-title'>Episode 6 — The Rosetta Stone</span>"
+    ]
+  },
+  {
+    "objectID": "06-rosetta.html#the-methodology-lesson",
+    "href": "06-rosetta.html#the-methodology-lesson",
+    "title": "Episode 6 — The Rosetta Stone",
+    "section": "The methodology lesson",
+    "text": "The methodology lesson\nWe started by looking at everything together — all machines, all alarms. That was necessary: we needed the big picture first. But the real structure only appeared when we separated what needed to be separated.\nWhen we don’t know where to look, we start with the whole. As differences emerge, we isolate them. The PCA told us what to separate. The per-machine analysis told us why.",
+    "crumbs": [
+      "<span class='chapter-number'>6</span>  <span class='chapter-title'>Episode 6 — The Rosetta Stone</span>"
+    ]
+  },
+  {
+    "objectID": "06-rosetta.html#what-the-machines-are-hiding",
+    "href": "06-rosetta.html#what-the-machines-are-hiding",
+    "title": "Episode 6 — The Rosetta Stone",
+    "section": "What the machines are hiding",
+    "text": "What the machines are hiding\nThe alarms are not 132 independent problems. They organise into families that correspond to machines.\nMixing machines hides the structure. Every analysis becomes sharper when we stop pooling machines that have nothing in common.\nThe warning signal is in the accumulation, not in a single alarm. On some machines, the pattern of repeated stops in the last 30 minutes predicts a long stop. On others, the log alone isn’t enough.",
+    "crumbs": [
+      "<span class='chapter-number'>6</span>  <span class='chapter-title'>Episode 6 — The Rosetta Stone</span>"
+    ]
+  },
+  {
+    "objectID": "06-rosetta.html#what-to-do-about-it",
+    "href": "06-rosetta.html#what-to-do-about-it",
+    "title": "Episode 6 — The Rosetta Stone",
+    "section": "What to do about it",
+    "text": "What to do about it\nTreat each alarm family as a maintenance project, not each alarm code. s_1’s signature alarms (A_065, A_066, A_067…) are a family. Fixing one without addressing the others won’t solve the problem.\nMaking predictions actionable requires knowing the operator’s response time. The data identifies the sequences. The plant defines how fast someone can act on them.\n\nNext: everything in this book was built with the same set of R functions. Can we turn that into a systematic language — a grammar for asking any machine the same questions?",
+    "crumbs": [
+      "<span class='chapter-number'>6</span>  <span class='chapter-title'>Episode 6 — The Rosetta Stone</span>"
+    ]
+  },
+  {
+    "objectID": "07-behind.html",
+    "href": "07-behind.html",
+    "title": "Episode 7 — Behind the scenes",
+    "section": "",
+    "text": "The LEGO principle\nEverything in this book was built with the same set of tools.\nSix episodes. OEE, alarm rankings, sequences, anomalies, alarm families, escalation paths, costs.\nAll of it was built with a consistent set of R tools — designed to work on any machine log, not just this one.\nI think in LEGO. Each brick does one thing. The bricks snap together. And from the same box, you can build very different things depending on the question.\nThat’s how these tools are designed. One brick computes an OEE. Another ranks alarms. Another finds alarm families. The six episodes are six different assemblies from the same box of bricks.",
+    "crumbs": [
+      "<span class='chapter-number'>7</span>  <span class='chapter-title'>Episode 7 — Behind the scenes</span>"
+    ]
+  },
+  {
+    "objectID": "07-behind.html#a-language-for-machine-logs",
+    "href": "07-behind.html#a-language-for-machine-logs",
+    "title": "Episode 7 — Behind the scenes",
+    "section": "A language for machine logs",
+    "text": "A language for machine logs\nEvery question we asked follows the same structure:\n\nWhat are we measuring? (OEE, alarm duration, similarity…)\nWhere? (one machine, all machines, one alarm family…)\nOver what period? (full dataset, last month, before/after a date…)\nCompared to what? (a target, another machine, the machine’s own history…)\n\nThat structure is a grammar — a systematic way of asking machines the same questions, regardless of which machine, which plant, which industry. The dataset here is food packaging. The method applies the same to pharma, automotive, electronics — any process where machines produce interval logs.",
+    "crumbs": [
+      "<span class='chapter-number'>7</span>  <span class='chapter-title'>Episode 7 — Behind the scenes</span>"
+    ]
+  },
+  {
+    "objectID": "07-behind.html#three-layers",
+    "href": "07-behind.html#three-layers",
+    "title": "Episode 7 — Behind the scenes",
+    "section": "Three layers",
+    "text": "Three layers\n\n\n\n\n\nLayer\nRole\nWhat it does\n\n\n\n\nBricks\nOne question, one answer\nCompute OEE, rank alarms, find anomalies\n\n\nAssemblies\nCombine bricks into structured analyses\nFind alarm families, score priorities, estimate gains\n\n\nDiagnosis\nFull pipeline, one pass\nProduce a report with prioritised findings",
+    "crumbs": [
+      "<span class='chapter-number'>7</span>  <span class='chapter-title'>Episode 7 — Behind the scenes</span>"
+    ]
+  },
+  {
+    "objectID": "07-behind.html#youve-only-seen-half",
+    "href": "07-behind.html#youve-only-seen-half",
+    "title": "Episode 7 — Behind the scenes",
+    "section": "You’ve only seen half",
+    "text": "You’ve only seen half\nThe six episodes explored the dataset step by step. The tools behind them now go further. Here are a few examples.\nThe funnel. 132 alarm codes in the log. The diagnosis layer filters automatically — Pareto, then exclusion of low-impact alarms. On this dataset: 132 → 11 → 4 alarms that concentrate the investigation. Not a catalogue. A shortlist.\nPeriod comparison. The tools can compare two time windows and produce conclusions in plain language:\nNot charts. Not numbers. Sentences — written for someone who needs to decide what to do next.\nPrediction. On some machines, the accumulation of downtime in the last 30 minutes predicts a long stop better than any individual alarm code. The tools can learn these patterns. On others, the log alone isn’t enough — which is also a result.",
+    "crumbs": [
+      "<span class='chapter-number'>7</span>  <span class='chapter-title'>Episode 7 — Behind the scenes</span>"
+    ]
+  },
+  {
+    "objectID": "07-behind.html#no-ai-inside",
+    "href": "07-behind.html#no-ai-inside",
+    "title": "Episode 7 — Behind the scenes",
+    "section": "No AI inside",
+    "text": "No AI inside\nTo be clear: none of this relies on artificial intelligence. The methods are established, documented, and interpretable — no neural network, no black box. Statistics and domain knowledge, formalised into modular tools that snap together.\nThat said, a natural extension exists: a local language model that translates plain-language questions into the right analysis call. I built and tested the concept — it works. A question goes in — in whatever language — the right analysis comes out. The logic is language-agnostic. And everything stays local — even offline.\nBut it’s an option, not a dependency. The grammar works without it.",
+    "crumbs": [
+      "<span class='chapter-number'>7</span>  <span class='chapter-title'>Episode 7 — Behind the scenes</span>"
+    ]
+  },
+  {
+    "objectID": "07-behind.html#still-growing",
+    "href": "07-behind.html#still-growing",
+    "title": "Episode 7 — Behind the scenes",
+    "section": "Still growing",
+    "text": "Still growing\nThese tools are still actively developed and tested on real data. They work — but they’re not finished. The toolbox grows with every new question.",
+    "crumbs": [
+      "<span class='chapter-number'>7</span>  <span class='chapter-title'>Episode 7 — Behind the scenes</span>"
+    ]
+  },
+  {
+    "objectID": "07-behind.html#when-machines-talk",
+    "href": "07-behind.html#when-machines-talk",
+    "title": "Episode 7 — Behind the scenes",
+    "section": "When machines talk",
+    "text": "When machines talk\nThis started as an exercise on a public dataset. It ended with something I didn’t plan: a language.\nNot a programming language — a communication language. A way to listen to what machines say through their logs. To translate their alarms, their patterns, their silences into questions and answers.\nThe log isn’t just a record of what happened. It’s raw material for decisions — adjust a parameter, schedule an intervention, change a procedure.\nThat’s what this book is about. Listening.\n\nArnaud Coqueblin",
+    "crumbs": [
+      "<span class='chapter-number'>7</span>  <span class='chapter-title'>Episode 7 — Behind the scenes</span>"
+    ]
+  },
+  {
+    "objectID": "index.html#what-a-row-looks-like",
+    "href": "index.html#what-a-row-looks-like",
+    "title": "When Machines Talk",
+    "section": "What a row looks like",
+    "text": "What a row looks like\nEach row is an interval — a continuous period in a given state. The end of one is the start of the next. No gaps. No overlaps.\n%%| fig-cap: \"Each row is a continuous interval in one state.\"\ngraph LR\n  A[sched. downtime] --&gt; B[idle]\n  B --&gt; C[production]\n  C --&gt; D[downtime]\n  D --&gt; E[production]\n  style A fill:#e8dcc8,color:#333\n  style B fill:#c8c8c8,color:#333\n  style C fill:#1d6fa4,color:#fff\n  style D fill:#c0392b,color:#fff\n  style E fill:#1d6fa4,color:#fff\nThere are exactly five state types:\ndf |&gt;\n  count(type, sort = TRUE) |&gt;\n  mutate(pct = scales::percent(n / sum(n), accuracy = 0.1)) |&gt;\n  rename(State = type, Count = n, Share = pct) |&gt;\n  kbl() |&gt;\n  kable_styling(bootstrap_options = c(\"striped\", \"hover\"), full_width = FALSE)\nThe five state types already point towards performance analysis. But one number stands out.\nperformance_loss: 28% of all intervals. The machines are running — but not at full speed. No breakdown. No alarm. And yet it’s the second most frequent state in the log.\n\n\n\n\n\n\nWhy this distinction matters\n\n\n\n\n\nA machine that runs all day with no downtime but spends half its time below full speed looks healthy if we only count stoppages. performance_loss captures the gap — and it’s large.",
+    "crumbs": [
+      "Preface"
+    ]
+  },
+  {
+    "objectID": "index.html#the-codes-i-cant-read",
+    "href": "index.html#the-codes-i-cant-read",
+    "title": "When Machines Talk",
+    "section": "The codes I can’t read",
+    "text": "The codes I can’t read\nEvery unplanned downtime interval carries an alarm code. There are 133 distinct codes in this log — from A_000 to A_132. A_000 seems to mean ‘normal operation’. The other 132 appear during stoppages.\nI found no public dictionary to translate these codes into fault descriptions.\n132 alarm codes, no Rosetta Stone. Just repeated patterns, frequencies, co-occurrences — and no translation key. We’ll have to figure out the meaning from behaviour. That’s what the following episodes do.",
+    "crumbs": [
+      "Preface"
+    ]
+  },
+  {
+    "objectID": "index.html#the-counters-a-common-misreading",
+    "href": "index.html#the-counters-a-common-misreading",
+    "title": "When Machines Talk",
+    "section": "The counters — a common misreading",
+    "text": "The counters — a common misreading\nThe log also records two counters: pi (packages counted at the entry of the machine) and po (packages counted at the exit).\ndf |&gt;\n  filter(equipment_ID == \"s_1\", type == \"production\") |&gt;\n  arrange(start) |&gt;\n  mutate(delta_pi = pi - lag(pi), delta_po = po - lag(po)) |&gt;\n  select(equipment_ID, start, type, pi, po, delta_pi, delta_po) |&gt;\n  slice(2:6) |&gt;\n  mutate(start = format(start, \"%Y-%m-%d %H:%M\")) |&gt;\n  kbl(digits = 0, format.args = list(big.mark = \",\")) |&gt;\n  kable_styling(bootstrap_options = c(\"striped\", \"hover\"), full_width = FALSE, font_size = 13)\nThe values are large and grow from row to row — they’re cumulative counters, not per-interval counts. To get what happened during an interval, we need the difference with the previous row (delta_pi, delta_po).\nIf these counters are reliable, they should grow steadily over time — a straight line going up.\n#| fig-cap: \"Cumulative counters pi (packages in) and po (packages out) over two years, by machine. A well-behaved counter is a straight line going up.\"\n#| fig-height: 5.5\n\ndf |&gt;\n  arrange(equipment_ID, start) |&gt;\n  pivot_longer(c(pi, po), names_to = \"counter\", values_to = \"value\") |&gt;\n  mutate(counter = recode(counter, pi = \"pi (in)\", po = \"po (out)\")) |&gt;\n  ggplot(aes(start, value, colour = counter)) +\n  geom_line(linewidth = 0.35, alpha = 0.8) +\n  facet_wrap(~equipment_ID, scales = \"free_y\", ncol = 3) +\n  scale_y_continuous(labels = scales::label_number(scale_cut = scales::cut_short_scale())) +\n  scale_x_datetime(date_breaks = \"1 year\", date_labels = \"%Y\") +\n  scale_colour_manual(values = c(\"pi (in)\" = \"#1d6fa4\", \"po (out)\" = \"#e67e22\"),\n                      name = NULL) +\n  labs(x = NULL, y = NULL) +\n  theme_minimal(base_family = \"Source Sans 3\", base_size = 11) +\n  theme(\n    legend.position = \"bottom\",\n    legend.text = element_text(size = 10),\n    strip.text = element_text(face = \"bold\", size = 11, colour = \"#1a1a2e\"),\n    panel.grid.minor = element_blank(),\n    panel.grid.major = element_line(linewidth = 0.3, colour = \"grey90\"),\n    axis.text = element_text(colour = \"grey40\", size = 9),\n    plot.background = element_rect(fill = \"white\", colour = NA),\n    panel.spacing = unit(1, \"lines\")\n  )\nOuch… s_1 and s_3 are clean — steady growth, pi and po tracking each other. The rest is less reassuring. s_2 shows a spike to 300 million then drops back to near zero. s_4 oscillates instead of growing — the counter goes down, which a cumulative counter shouldn’t do. s_5 has a clean reset to zero mid-series.\nThese counters can’t be trusted at interval level. And on some machines, not even at daily level.\n\n\n\n\n\n\nWhat this rules out\n\n\n\n\n\nThe reject rate calculated from delta_po − delta_pi per interval measures sensor behaviour, not production quality. On short windows, the signal is drowned in noise. For an interpretable figure, aggregating over at least a full day is necessary.",
+    "crumbs": [
+      "Preface"
+    ]
+  },
+  {
+    "objectID": "index.html#five-machines-but-not-a-fleet",
+    "href": "index.html#five-machines-but-not-a-fleet",
+    "title": "When Machines Talk",
+    "section": "Five machines — but not a fleet",
+    "text": "Five machines — but not a fleet\nWe’d expect these five machines to be of the same type and do the same work. The speed setpoints say otherwise.\n#| fig-cap: \"Speed setpoint distribution by machine (share of active time per 500 pkg/h bin, excluding start/stop).\"\n#| fig-height: 3.5\n\ndf |&gt;\n  filter(speed &gt; 0) |&gt;\n  mutate(speed_bin = round(speed / 500) * 500) |&gt;\n  group_by(equipment_ID, speed_bin) |&gt;\n  summarise(elapsed_s = sum(elapsed_s), .groups = \"drop\") |&gt;\n  group_by(equipment_ID) |&gt;\n  mutate(pct_time = elapsed_s / sum(elapsed_s)) |&gt;\n  ungroup() |&gt;\n  ggplot(aes(x = speed_bin, y = fct_rev(equipment_ID), fill = pct_time)) +\n  geom_tile(colour = \"white\", linewidth = 0.4) +\n  scale_x_continuous(labels = scales::label_comma(),\n                     breaks = seq(0, 7000, by = 1000)) +\n  scale_fill_gradient(low = \"#eaf2f8\", high = \"#1d6fa4\",\n                      labels = scales::percent, name = \"Share\\nof time\") +\n  labs(x = \"Speed setpoint (pkg/h, rounded to 500)\", y = NULL) +\n  theme_minimal(base_size = 12)\nThe speed regimes don’t overlap. Some machines run at high throughput; others at much lower setpoints. They don’t run at the same speed.\nAnd their co-activity confirms the same thing:\n#| fig-cap: \"Fraction of total time where both machines are simultaneously in production. Dark = often together; light = rarely together.\"\n#| fig-height: 3.5\n\ncoact &lt;- coactivity_matrix(df, state = \"production\", res_min = 5)\n\nbind_rows(\n  coact,\n  coact |&gt; rename(machine_a = machine_b, machine_b = machine_a)\n) |&gt;\n  bind_rows(\n    tibble(\n      machine_a = sort(unique(df$equipment_ID)),\n      machine_b = sort(unique(df$equipment_ID)),\n      co_active_pct = NA_real_, jaccard = NA_real_\n    )\n  ) |&gt;\n  ggplot(aes(machine_a, machine_b, fill = co_active_pct)) +\n  geom_tile(colour = \"white\", linewidth = 0.6) +\n  geom_text(\n    aes(label = if_else(is.na(co_active_pct), \"—\",\n                        scales::percent(co_active_pct, accuracy = 1))),\n    size = 3.5, colour = \"grey20\", fontface = \"bold\"\n  ) +\n  scale_fill_gradient(low = \"#eaf2f8\", high = \"#1d6fa4\",\n                      labels = scales::percent, na.value = \"grey85\",\n                      name = \"Co-activity\") +\n  labs(x = NULL, y = NULL) +\n  theme_minimal(base_size = 12) +\n  theme(panel.grid = element_blank())\n\n\n\n\n\n\nHow to read this matrix\n\n\n\n\n\nEach cell shows the fraction of total time where both machines are simultaneously in production (5-minute grid over the full history). A score near zero means they almost never run together — they alternate. A high score means they operate in parallel.\n\n\n\nSome pairs run together. Others almost never do. Comparing their performance as if they were doing the same job would give us numbers that mean nothing.",
+    "crumbs": [
+      "Preface"
+    ]
+  },
+  {
+    "objectID": "index.html#what-the-machines-are-hiding",
+    "href": "index.html#what-the-machines-are-hiding",
+    "title": "When Machines Talk",
+    "section": "What the machines are hiding",
+    "text": "What the machines are hiding\nNo diagnosis yet. But we now have a map of what we don’t know.\n133 alarm codes with no dictionary. A state — performance_loss — that slips through standard reporting. Counters that drift. Five machines that aren’t in the same league.",
+    "crumbs": [
+      "Preface"
+    ]
+  },
+  {
+    "objectID": "index.html#what-to-do-about-it",
+    "href": "index.html#what-to-do-about-it",
+    "title": "When Machines Talk",
+    "section": "What to do about it",
+    "text": "What to do about it\nThese five machines can’t be pooled. Different speed regimes, different histories, different co-activity patterns. Aggregating them would give us averages that describe none of them.\nThe counters are unreliable at interval level. pi and po are useful over full days or longer. Below that, they measure noise.\nperformance_loss matters. It accounts for 28% of intervals. If we only look at downtimes, we miss a quarter of what’s going on.\n\nNext: Let’s compute OEE. The results are not what the availability numbers would suggest.",
+    "crumbs": [
+      "Preface"
+    ]
+  }
+]
